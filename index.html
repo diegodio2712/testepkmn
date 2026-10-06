@@ -45,6 +45,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .graph-title{font-weight:800}
 .legend{color:var(--muted);font-size:12px}
 #graph-wrap{position:relative;width:100%;height:min(70vh,680px);border-radius:14px;overflow:hidden;background:#07101f;box-shadow:inset 0 0 0 1px #263b60}#graph{width:100%;height:100%;display:block;background:#07101f}#sprite-layer{position:absolute;inset:0;pointer-events:none;z-index:5} .map-sprite{position:absolute;transform:translate(-50%,-50%);object-fit:contain;display:block;filter:drop-shadow(0 3px 5px rgba(0,0,0,.7));} .map-sprite.guess{width:54px;height:54px;border-radius:50%;background:#08111f;border:3px solid #e8f1ff;} .map-sprite.target{width:68px;height:68px;border-radius:50%;background:#07151a;border:5px solid #48d597;filter:drop-shadow(0 0 12px rgba(72,213,151,.95));} .map-badge{position:absolute;transform:translate(-50%,-50%);z-index:7;width:22px;height:22px;border-radius:50%;background:#08111f;border:1px solid #e8f1ff;color:#fff;font:900 10px system-ui;display:grid;place-items:center;box-shadow:0 2px 6px rgba(0,0,0,.6)} .map-name{position:absolute;transform:translate(-50%,0);color:#48d597;font:900 13px system-ui;text-shadow:0 2px 4px #000;white-space:nowrap;} 
+.generations{margin:14px 0 12px;padding:12px;background:#0d1526;border:1px solid #23314d;border-radius:13px}.gen-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px}.gen-title{font-weight:800;font-size:13px}.gen-actions{display:flex;gap:6px}.gen-actions button{width:auto;padding:5px 9px;font-size:11px;background:#17243a;border:1px solid #31476c}.gen-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.gen-option{display:flex;align-items:center;gap:7px;padding:7px 8px;background:#101b2f;border:1px solid #263a5e;border-radius:9px;cursor:pointer;font-size:12px}.gen-option input{accent-color:#48d597}.gen-option:has(input:checked){border-color:#48d597;background:#102b2b}.new-game{margin-top:8px;width:100%;background:#182942;border-color:#385783}.hidden-target{display:none!important}
 .info{margin-top:16px;padding:13px 15px;background:#0d1526;border-radius:12px;color:var(--muted);font-size:13px;line-height:1.5}
 .info b{color:var(--text)}
 .win{border-color:var(--good);box-shadow:0 0 0 1px rgba(72,213,151,.2)}
@@ -65,6 +66,14 @@ button:disabled{opacity:.45;cursor:not-allowed}
 <div class="layout">
   <section class="card left">
     <label for="search">Qual Pokémon você quer chutar?</label>
+    <div class="generations">
+      <div class="gen-head">
+        <div class="gen-title">Gerações da partida</div>
+        <div class="gen-actions"><button type="button" id="allGen">Todas</button><button type="button" id="clearGen">Limpar</button></div>
+      </div>
+      <div class="gen-grid" id="genGrid"></div>
+      <button type="button" class="new-game" id="newGameBtn">🎲 Nova partida</button>
+    </div>
     <div class="search-wrap">
       <input id="search" autocomplete="off" placeholder="Digite o nome...">
       <div id="suggestions" class="suggestions"></div>
@@ -120,12 +129,73 @@ const canvas=document.getElementById('graph');
 const spriteLayer=document.getElementById('sprite-layer');
 const toast=document.getElementById('toast');
 
-let target=Math.floor(Math.random()*N);
 let selected=-1;
 let used=new Set();
 let history=[];
 let solved=false;
 let activeSuggestion=0;
+let selectedGenerations=new Set([1,2,3,4,5,6,7,8,9]);
+let target=-1;
+
+const GEN_RANGES={1:[1,151],2:[152,251],3:[252,386],4:[387,493],5:[494,649],6:[650,721],7:[722,809],8:[810,905],9:[906,1025]};
+function generationOfId(id){
+  for(const [g,r] of Object.entries(GEN_RANGES)) if(id>=r[0] && id<=r[1]) return Number(g);
+  return null;
+}
+function availableIndexes(){
+  const out=[];
+  for(let i=0;i<N;i++) if(selectedGenerations.has(generationOfId(META[i].id))) out.push(i);
+  return out;
+}
+function chooseTarget(){
+  const pool=availableIndexes();
+  target=pool.length ? pool[Math.floor(Math.random()*pool.length)] : -1;
+}
+
+function buildGenerationUI(){
+  const grid=document.getElementById('genGrid');
+  grid.innerHTML='';
+  for(let g=1;g<=9;g++){
+    const [a,b]=GEN_RANGES[g];
+    const label=document.createElement('label');
+    label.className='gen-option';
+    label.innerHTML=`<input type="checkbox" data-gen="${g}" checked> <span><b>Geração ${g}</b><br><small>#${a}–#${b}</small></span>`;
+    label.querySelector('input').addEventListener('change',()=>{
+      const cb=label.querySelector('input');
+      if(cb.checked) selectedGenerations.add(g); else selectedGenerations.delete(g);
+      updateGenerationState();
+    });
+    grid.appendChild(label);
+  }
+}
+function updateGenerationState(){
+  const pool=availableIndexes();
+  if(!pool.length){
+    statusEl.innerHTML='<b style="color:#ff8f8f">Selecione pelo menos uma geração.</b>';
+    guessBtn.disabled=true;
+    searchInput.disabled=true;
+    return;
+  }
+  searchInput.disabled=false;
+  statusEl.textContent=`${pool.length.toLocaleString('pt-BR')} Pokémon disponíveis. Clique em “Nova partida” para sortear o alvo.`;
+}
+function resetGame(){
+  const pool=availableIndexes();
+  if(!pool.length){updateGenerationState();return;}
+  target=pool[Math.floor(Math.random()*pool.length)];
+  selected=-1; used=new Set(); history=[]; solved=false; activeSuggestion=0;
+  searchInput.value=''; suggestions.style.display='none'; guessBtn.disabled=true;
+  renderGuesses();
+  statusEl.textContent=`Partida iniciada com ${pool.length.toLocaleString('pt-BR')} Pokémon possíveis. O alvo está oculto.`;
+  drawGraph();
+}
+const genGrid=document.getElementById('genGrid');
+const allGenBtn=document.getElementById('allGen');
+const clearGenBtn=document.getElementById('clearGen');
+const newGameBtn=document.getElementById('newGameBtn');
+allGenBtn.addEventListener('click',()=>{selectedGenerations=new Set([1,2,3,4,5,6,7,8,9]);genGrid.querySelectorAll('input').forEach(x=>x.checked=true);updateGenerationState();});
+clearGenBtn.addEventListener('click',()=>{selectedGenerations.clear();genGrid.querySelectorAll('input').forEach(x=>x.checked=false);updateGenerationState();});
+newGameBtn.addEventListener('click',resetGame);
 // Sprites oficiais do ecossistema PokéAPI.
 // Usamos o repositório de sprites diretamente para que o GitHub Pages
 // não dependa de uma chamada de API para cada miniatura.
@@ -155,7 +225,7 @@ function showSuggestions(){
   const q=norm(searchInput.value.trim());
   if(!q){ suggestions.style.display='none'; selected=-1; guessBtn.disabled=true; return; }
   const found=[];
-  for(let i=0;i<N && found.length<12;i++) if(names[i].includes(q) && !used.has(i)) found.push(i);
+  for(let i=0;i<N && found.length<12;i++) if(names[i].includes(q) && !used.has(i) && selectedGenerations.has(generationOfId(META[i].id))) found.push(i);
   suggestions.innerHTML='';
   found.forEach((idx,j)=>{
     const p=META[idx], div=document.createElement('div');
@@ -282,14 +352,16 @@ function addMapImage(p,x,y,kind,label){
   }
 }
 
-function renderMapSprites(w,h,pad){
+function renderMapSprites(w,h,pad,showTarget){
   spriteLayer.innerHTML='';
   history.forEach((g,i)=>{
     const p=META[g.idx], [x,y]=xy(g.idx,w,h,pad);
     addMapImage(p,x,y,'guess',i+1);
   });
-  const targ=META[target], [tx,ty]=xy(target,w,h,pad);
-  addMapImage(targ,tx,ty,'target');
+  if(showTarget && target>=0){
+    const targ=META[target], [tx,ty]=xy(target,w,h,pad);
+    addMapImage(targ,tx,ty,'target');
+  }
 }
 
 function drawGraph(){
@@ -310,38 +382,42 @@ function drawGraph(){
   ctx.beginPath();ctx.moveTo(pad,h-pad);ctx.lineTo(w-pad,h-pad);ctx.stroke();
   ctx.beginPath();ctx.moveTo(pad,pad);ctx.lineTo(pad,h-pad);ctx.stroke();
 
-  const [tx,ty]=xy(target,w,h,pad);
-  // linhas dos chutes ao alvo
-  history.forEach((g,i)=>{
-    const [x,y]=xy(g.idx,w,h,pad);
-    const grad=ctx.createLinearGradient(x,y,tx,ty);
-    grad.addColorStop(0,'rgba(110,168,254,.80)');
-    grad.addColorStop(1,'rgba(72,213,151,.70)');
-    ctx.strokeStyle=grad; ctx.lineWidth=2.5;
-    ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke();
-    // pequeno marcador de distância no meio da linha
-    const mx=(x+tx)/2, my=(y+ty)/2;
-    ctx.fillStyle='rgba(7,16,31,.88)';
-    ctx.beginPath();ctx.roundRect(mx-27,my-10,54,20,8);ctx.fill();
-    ctx.fillStyle='#dce8ff';ctx.font='700 10px system-ui';ctx.textAlign='center';
-    ctx.fillText(fmtDist(history[i].d),mx,my+3);ctx.textAlign='left';
-  });
+  // O alvo e as linhas ficam ocultos até o jogador acertar.
+  // Assim o mapa não entrega a posição do Pokémon secreto.
+  if(solved && target>=0){
+    const [tx,ty]=xy(target,w,h,pad);
+    history.forEach((g,i)=>{
+      const [x,y]=xy(g.idx,w,h,pad);
+      const grad=ctx.createLinearGradient(x,y,tx,ty);
+      grad.addColorStop(0,'rgba(110,168,254,.80)');
+      grad.addColorStop(1,'rgba(72,213,151,.70)');
+      ctx.strokeStyle=grad; ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(tx,ty);ctx.stroke();
+      const mx=(x+tx)/2, my=(y+ty)/2;
+      ctx.fillStyle='rgba(7,16,31,.88)';
+      ctx.beginPath();ctx.roundRect(mx-27,my-10,54,20,8);ctx.fill();
+      ctx.fillStyle='#dce8ff';ctx.font='700 10px system-ui';ctx.textAlign='center';
+      ctx.fillText(fmtDist(history[i].d),mx,my+3);ctx.textAlign='left';
+    });
 
-  // alvo: muito mais destacado
-  const targ=META[target], radius=34;
-  ctx.save();
-  ctx.shadowColor='rgba(72,213,151,.95)';ctx.shadowBlur=24;
-  ctx.fillStyle='rgba(72,213,151,.20)';ctx.beginPath();ctx.arc(tx,ty,radius+8,0,Math.PI*2);ctx.fill();ctx.restore();
-  ctx.save();ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.fillStyle='#07151a';ctx.fill();ctx.restore();
-  ctx.strokeStyle='#48d597';ctx.lineWidth=5;ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.stroke();
-
-  renderMapSprites(w,h,pad);
+    const targ=META[target], radius=34;
+    ctx.save();
+    ctx.shadowColor='rgba(72,213,151,.95)';ctx.shadowBlur=24;
+    ctx.fillStyle='rgba(72,213,151,.20)';ctx.beginPath();ctx.arc(tx,ty,radius+8,0,Math.PI*2);ctx.fill();ctx.restore();
+    ctx.save();ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.fillStyle='#07151a';ctx.fill();ctx.restore();
+    ctx.strokeStyle='#48d597';ctx.lineWidth=5;ctx.beginPath();ctx.arc(tx,ty,radius,0,Math.PI*2);ctx.stroke();
+    renderMapSprites(w,h,pad,true);
+  } else {
+    renderMapSprites(w,h,pad,false);
+  }
 
   ctx.fillStyle='rgba(174,187,210,.75)';ctx.font='11px system-ui';ctx.fillText('Eixo 1',w-65,h-14);ctx.save();ctx.translate(15,65);ctx.rotate(-Math.PI/2);ctx.fillText('Eixo 2',0,0);ctx.restore();
 }
 guessBtn.addEventListener('click',makeGuess);
+buildGenerationUI();
+chooseTarget();
 window.addEventListener('resize',resizeCanvas);
-statusEl.textContent=`${N.toLocaleString('pt-BR')} Pokémon carregados. O alvo foi escolhido.`;
+statusEl.textContent=`${N.toLocaleString('pt-BR')} Pokémon carregados. O alvo está oculto.`;
 resizeCanvas();
 </script>
 </body>
